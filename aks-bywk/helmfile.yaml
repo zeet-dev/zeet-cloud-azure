@@ -1,0 +1,170 @@
+repositories:
+  - name: "prometheus-community"
+    url: "https://prometheus-community.github.io/helm-charts"
+  - name: traefik
+    url: https://helm.traefik.io/traefik
+  - name: jetstack
+    url: https://charts.jetstack.io
+  - name: bitnami
+    url: https://charts.bitnami.com/bitnami
+  - name: "grafana"
+    url: "https://grafana.github.io/helm-charts"
+  - name: kedacore
+    url: https://kedacore.github.io/charts
+
+releases:
+  - name: prometheus
+    namespace: prometheus
+    chart: prometheus-community/prometheus
+    version: 20.1.0
+    values:
+      - alertmanager:
+          enabled: true
+          persistence:
+            size: 10Gi
+          strategy:
+            type: Recreate
+        server:
+          persistentVolume:
+            size: 10Gi
+          strategy:
+            type: Recreate
+          resources:
+            limits:
+              cpu: 400m
+              memory: 1000Mi
+            requests:
+              cpu: 400m
+              memory: 1000Mi
+          ingress:
+            enabled: true
+            annotations:
+              kubernetes.io/ingress.class: traefik
+              traefik.ingress.kubernetes.io/router.tls: "true"
+              traefik.ingress.kubernetes.io/router.middlewares: "traefik-zeet-auth@kubernetescrd"
+            hosts:
+              - zeet-prometheus.{{ requiredEnv "CLUSTER_DOMAIN" }}
+            tls:
+              - hosts:
+                  - zeet-prometheus.{{ requiredEnv "CLUSTER_DOMAIN" }}
+        nodeExporter:
+          tolerations:
+            - effect: "NoSchedule"
+              operator: "Exists"
+        kube-state-metrics:
+          metricLabelsAllowlist:
+            - 'pods=[*]'
+  - name: cert-manager
+    namespace: cert-manager
+    chart: jetstack/cert-manager
+    version: 1.9.1
+    values:
+      - installCRDs: true
+        serviceAccount:
+          labels:
+            azure.workload.identity/use: "true"
+        podLabels:
+          azure.workload.identity/use: "true"
+        extraEnvVars:
+          - name: AZURE_TENENT_ID
+            value: {{ requiredEnv "AZURE_TENENT_ID" }}
+          - name: AZURE_SUBSCRIPTION_ID
+            value: {{ requiredEnv "AZURE_SUBSCRIPTION_ID" }}
+          - name: AZURE_RESOURCE_GROUP
+            value: {{ requiredEnv "AZURE_RESOURCE_GROUP" }}
+  - name: external-dns
+    namespace: kube-system
+    chart: bitnami/external-dns
+    version: 6.15.0
+    values:
+    - serviceAccount:
+        name: external-dns
+      sources:
+        - service
+      publishHostIP: true
+      txtOwnerId: external-dns
+      domainFilters:
+        - {{ requiredEnv "CLUSTER_DOMAIN" }}
+      provider: azure
+      azure:
+        - secretName: azure-secrects 
+      extraEnvVars:
+        - name: USER_ASSIGNED_IDENTITY_CLIENT_ID
+          value: {{ requiredEnv "USER_ASSIGNED_IDENTITY_CLIENT_ID" }}
+        - name: AZURE_ZONE_NAME
+          value: {{ requiredEnv "AZURE_ZONE_NAME" }}
+        - name: AZURE_RESOURCE_GROUP
+          value: {{ requiredEnv "AZURE_RESOURCE_GROUP" }}
+        - name: AZURE_SUBSCRIPTION_ID
+          value: {{ requiredEnv "AZURE_SUBSCRIPTION_ID" }}
+  - name: metrics-server
+    namespace: kube-system
+    chart: bitnami/metrics-server
+    version: 6.0.7
+    values:
+    - tolerations:
+        - effect: NoSchedule
+          operator: "Equal"
+          key: zeet.co/dedicated
+          value: system
+      resources:
+        requests:
+          cpu: 100m
+          memory: 200Mi
+        limits:
+          cpu: 100m
+          memory: 200Mi
+      apiService:
+        create: true
+      extraArgs:
+        - --kubelet-insecure-tls=true
+        - --kubelet-preferred-address-types=InternalIP 
+  - name: keda
+    namespace: keda
+    chart: kedacore/keda
+    version: 2.7.2
+  - name: traefik
+    namespace: traefik
+    chart: traefik/traefik
+    version: 12.0.7
+    values:
+      - deployment:
+          replicas: 1
+          terminationGracePeriodSeconds: 180
+        service:
+          annotations:
+            external-dns.alpha.kubernetes.io/hostname: {{ requiredEnv "CLUSTER_DOMAIN" }}.,*.{{ requiredEnv "CLUSTER_DOMAIN" }}.
+        additionalArguments:
+          - --entryPoints.web.proxyProtocol.trustedIPs=10.0.0.0/8
+          - --entryPoints.websecure.proxyProtocol.trustedIPs=10.0.0.0/8
+        ingressClass:
+          enabled: true
+        logs:
+          general:
+            level: FATAL
+          access:
+            enabled: true
+        resources:
+          limits:
+            cpu: 0.2
+            memory: 0.4Gi
+          requests:
+            cpu: 0.2
+            memory: 0.4Gi
+        autoscaling:
+          enabled: true
+          minReplicas: 2
+          maxReplicas: 10
+          metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 70
+          - type: Resource
+            resource:
+              name: memory
+              target:
+                type: Utilization
+                averageUtilization: 70
