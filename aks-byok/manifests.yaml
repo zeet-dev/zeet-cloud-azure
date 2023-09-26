@@ -16,23 +16,14 @@ spec:
           matchLabels:
             use-dns-challenge: "true"
         dns01:
+          cnameStrategy: Follow
           azureDNS:
-            hostedZoneName: ${AZURE_ZONE_NAME}
+            hostedZoneName: ${CLUSTER_DOMAIN}
             resourceGroupName: ${AZURE_RESOURCE_GROUP}
             subscriptionID: ${AZURE_SUBSCRIPTION_ID}
             environment: AzurePublicCloud
             managedIdentity:
-              clientID: ${USER_ASSIGNED_IDENTITY_CLIENT_ID}
----
-apiVersion: v1
-kind: Secret
-metadata:
-  namespace: cert-manager
-  name: azure-secrects
-data:
-  tenantId: ${AZURE_TENENT_ID}
-  subscriptionId: ${AZURE_SUBSCRIPTION_ID}
-  resourceGroup: ${AZURE_RESOURCE_GROUP}
+              clientID: ${DNS_MANAGER_IDENTITY_CLIENT_ID}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -85,27 +76,4 @@ metadata:
   namespace: traefik
 data:
   users: ${PROMETHEUS_AUTH}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  namespace: cert-manager
-  name: external-dns
-rules:
-- apiGroups: [""]
-  resources: ["secrets"]
-  resourceNames: ["azure-secrects"]
-  verbs: ["get", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  namespace: cert-manager
-  name: external-dns
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: external-dns
-subjects:
-  - kind: ServiceAccount
-    name: external-dns
+

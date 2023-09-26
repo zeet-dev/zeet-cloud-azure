@@ -11,6 +11,8 @@ repositories:
     url: "https://grafana.github.io/helm-charts"
   - name: kedacore
     url: https://kedacore.github.io/charts
+  - name: external-dns
+    url: https://kubernetes-sigs.github.io/external-dns/
 
 releases:
   - name: prometheus
@@ -54,75 +56,36 @@ releases:
         kube-state-metrics:
           metricLabelsAllowlist:
             - 'pods=[*]'
-  - name: cert-manager
-    namespace: cert-manager
-    chart: jetstack/cert-manager
-    version: 1.9.1
-    values:
-      - installCRDs: true
-        serviceAccount:
-          labels:
-            azure.workload.identity/use: "true"
-        podLabels:
-          azure.workload.identity/use: "true"
-        extraEnvVars:
-          - name: AZURE_TENENT_ID
-            value: {{ requiredEnv "AZURE_TENENT_ID" }}
-          - name: AZURE_SUBSCRIPTION_ID
-            value: {{ requiredEnv "AZURE_SUBSCRIPTION_ID" }}
-          - name: AZURE_RESOURCE_GROUP
-            value: {{ requiredEnv "AZURE_RESOURCE_GROUP" }}
   - name: external-dns
     namespace: kube-system
-    chart: bitnami/external-dns
-    version: 6.15.0
+    chart: external-dns/external-dns
+    version: 1.13.1
     values:
-    - serviceAccount:
-        name: external-dns
-      sources:
+    - sources:
         - service
       publishHostIP: true
       txtOwnerId: external-dns
       domainFilters:
         - {{ requiredEnv "CLUSTER_DOMAIN" }}
       provider: azure
-      azure:
-        - secretName: azure-secrects 
-      extraEnvVars:
-        - name: USER_ASSIGNED_IDENTITY_CLIENT_ID
-          value: {{ requiredEnv "USER_ASSIGNED_IDENTITY_CLIENT_ID" }}
-        - name: AZURE_ZONE_NAME
-          value: {{ requiredEnv "AZURE_ZONE_NAME" }}
-        - name: AZURE_RESOURCE_GROUP
-          value: {{ requiredEnv "AZURE_RESOURCE_GROUP" }}
-        - name: AZURE_SUBSCRIPTION_ID
-          value: {{ requiredEnv "AZURE_SUBSCRIPTION_ID" }}
-  - name: metrics-server
-    namespace: kube-system
-    chart: bitnami/metrics-server
-    version: 6.0.7
-    values:
-    - tolerations:
-        - effect: NoSchedule
-          operator: "Equal"
-          key: zeet.co/dedicated
-          value: system
-      resources:
-        requests:
-          cpu: 100m
-          memory: 200Mi
-        limits:
-          cpu: 100m
-          memory: 200Mi
-      apiService:
-        create: true
       extraArgs:
-        - --kubelet-insecure-tls=true
-        - --kubelet-preferred-address-types=InternalIP 
-  - name: keda
-    namespace: keda
-    chart: kedacore/keda
-    version: 2.7.2
+      - --txt-wildcard-replacement=""
+      serviceAccount:
+        name: external-dns
+        annotations:
+          azure.workload.identity/client-id: {{ requiredEnv "DNS_MANAGER_IDENTITY_CLIENT_ID" }}
+      podLabels:
+        azure.workload.identity/use: "true"
+      secretConfiguration:
+        enabled: true
+        mountPath: "/etc/kubernetes/"
+        data:
+          azure.json: |
+            {
+              "subscriptionId": "{{ requiredEnv "AZURE_SUBSCRIPTION_ID" }}",
+              "resourceGroup": "{{ requiredEnv "AZURE_RESOURCE_GROUP" }}",
+              "useWorkloadIdentityExtension": true
+            }
   - name: traefik
     namespace: traefik
     chart: traefik/traefik
@@ -130,7 +93,7 @@ releases:
     values:
       - deployment:
           replicas: 1
-          terminationGracePeriodSeconds: 180
+          terminationGracePeriodSeconds: 300
         service:
           annotations:
             external-dns.alpha.kubernetes.io/hostname: {{ requiredEnv "CLUSTER_DOMAIN" }}.,*.{{ requiredEnv "CLUSTER_DOMAIN" }}.
@@ -138,7 +101,7 @@ releases:
           - --entryPoints.web.proxyProtocol.trustedIPs=10.0.0.0/8
           - --entryPoints.websecure.proxyProtocol.trustedIPs=10.0.0.0/8
         ingressClass:
-          enabled: true
+          enabled: true        
         logs:
           general:
             level: FATAL
@@ -168,3 +131,18 @@ releases:
               target:
                 type: Utilization
                 averageUtilization: 70
+  - name: cert-manager
+    namespace: cert-manager
+    chart: jetstack/cert-manager
+    version: 1.13.0
+    values:
+      - installCRDs: true
+        serviceAccount:
+          annotations:
+            azure.workload.identity/client-id: {{ requiredEnv "DNS_MANAGER_IDENTITY_CLIENT_ID" }}
+        podLabels:
+          azure.workload.identity/use: "true"
+  - name: keda
+    namespace: keda
+    chart: kedacore/keda
+    version: 2.11.2
