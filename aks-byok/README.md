@@ -1,10 +1,8 @@
 # Azure Configuration
 
-## Cert Manager
+### Azure Account
 
-- https://cert-manager.io/docs/tutorials/getting-started-aks-letsencrypt/
-
-### $AZURE_SUBSCRIPTION_ID
+## $AZURE_SUBSCRIPTION_ID
 
 Can be defined as:
 
@@ -12,35 +10,7 @@ Can be defined as:
 export AZURE_SUBSCRIPTION_ID=$(az account show --name <your-subscription-or-billing-account> --query 'id' -o tsv)
 ```
 
-### $USER_ASSIGNED_IDENTITY_CLIENT_ID
-
-```
-export USER_ASSIGNED_IDENTITY_CLIENT_ID=$(az identity show --name "<managed-identity-name>" --query 'clientId' -o tsv)
-az role assignment create \
-    --role "DNS Zone Contributor" \
-    --assignee $USER_ASSIGNED_IDENTITY_CLIENT_ID \
-    --scope $(az network dns zone show --name $DOMAIN_NAME -o tsv --query id)
-```
-
-### $AZURE_ZONE_NAME: DNS domain name
-
-Creating a public domain name in Azure
-
-```
-az network dns zone create --name $AZURE_ZONE_NAME
-```
-
-### $AZURE_RESOURCE_GROUP: The Azure resource group containing the DNS zone
-
-## DNS
-
-- https://github.com/kubernetes-sigs/external-dns/blob/master/docs/tutorials/azure.md
-
-### azure.json configuration
-
-Copy to `/etc/kubernetes/azure.json`
-
-#### $AZURE_TENENT_ID (required)
+#### $AZURE_TENANT_ID (required)
 
 ```
 az account show --query "tenantId"
@@ -54,4 +24,69 @@ az account show --query "id"
 
 ### $AZURE_RESOURCE_GROUP (required)
 
-Same of `$AZURE_RESOURCE_GROUP` from cert-manager
+The Azure resource group containing the AKS Cluster and DNS zone
+
+
+## Networking Stack
+
+### $CLUSTER_DOMAIN: DNS domain name
+
+Creating a public domain name in Azure
+
+```
+az network dns zone create --name $CLUSTER_DOMAIN
+```
+
+### Cert Manager
+
+- https://cert-manager.io/docs/tutorials/getting-started-aks-letsencrypt/
+
+
+#### $DNS_MANAGER_IDENTITY_CLIENT_ID
+
+```
+export DNS_MANAGER_IDENTITY_NAME=${CLUSTER_NAME}-dns-manager
+az identity create --name "${DNS_MANAGER_IDENTITY_NAME}" --resource-group $AZURE_RESOURCE_GROUP
+
+export DNS_MANAGER_IDENTITY_CLIENT_ID=$(az identity show --name "${DNS_MANAGER_IDENTITY_NAME}" --query 'clientId' -o tsv --resource-group $AZURE_RESOURCE_GROUP)
+export DNS_MANAGER_IDENTITY_PRINCIPAL_ID=$(az identity show --name "${DNS_MANAGER_IDENTITY_NAME}" --query 'principalId' -o tsv --resource-group $AZURE_RESOURCE_GROUP)
+az role assignment create \
+    --role "DNS Zone Contributor" \
+    --assignee-object-id $DNS_MANAGER_IDENTITY_PRINCIPAL_ID \
+    --assignee-principal-type ServicePrincipal \
+    --scope $(az network dns zone show --name $CLUSTER_DOMAIN -o tsv --query id --resource-group $AZURE_RESOURCE_GROUP)
+```
+
+``````
+export SERVICE_ACCOUNT_NAMESPACE=cert-manager
+export SERVICE_ACCOUNT_NAME=cert-manager
+export SERVICE_ACCOUNT_ISSUER=$(az aks show --resource-group $AZURE_RESOURCE_GROUP --name $CLUSTER_NAME --query "oidcIssuerProfile.issuerUrl" -o tsv)
+az identity federated-credential create \
+  --name "cert-manager" \
+  --identity-name "${DNS_MANAGER_IDENTITY_NAME}" \
+  --issuer "${SERVICE_ACCOUNT_ISSUER}" \
+  --subject "system:serviceaccount:${SERVICE_ACCOUNT_NAMESPACE}:${SERVICE_ACCOUNT_NAME}" \
+  --resource-group $AZURE_RESOURCE_GROUP
+``````
+
+## External DNS
+
+- https://github.com/kubernetes-sigs/external-dns/blob/master/docs/tutorials/azure.md
+
+```
+RESOURCE_GROUP_ID=$(az group show --name "${AZURE_RESOURCE_GROUP}" --query "id" --output tsv)
+az role assignment create --role "Reader" \
+    --assignee-object-id $DNS_MANAGER_IDENTITY_PRINCIPAL_ID \
+    --assignee-principal-type ServicePrincipal \
+    --scope "${RESOURCE_GROUP_ID}"
+
+
+az identity federated-credential create \
+    --name ${IDENTITY_NAME} \
+    --identity-name ${IDENTITY_NAME} \
+    --resource-group $AZURE_RESOURCE_GROUP \
+    --issuer "$SERVICE_ACCOUNT_ISSUER" \
+    --subject "system:serviceaccount:default:external-dns"
+
+```
+
