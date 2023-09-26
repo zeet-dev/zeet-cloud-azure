@@ -80,13 +80,14 @@ az role assignment create --role "Reader" \
     --assignee-principal-type ServicePrincipal \
     --scope "${RESOURCE_GROUP_ID}"
 
-
+export SERVICE_ACCOUNT_NAMESPACE=kube-system
+export SERVICE_ACCOUNT_NAME=external-dns
 az identity federated-credential create \
-    --name ${IDENTITY_NAME} \
-    --identity-name ${IDENTITY_NAME} \
-    --resource-group $AZURE_RESOURCE_GROUP \
-    --issuer "$SERVICE_ACCOUNT_ISSUER" \
-    --subject "system:serviceaccount:default:external-dns"
+  --name "external-dns" \
+  --identity-name "${DNS_MANAGER_IDENTITY_NAME}" \
+  --issuer "${SERVICE_ACCOUNT_ISSUER}" \
+  --subject "system:serviceaccount:${SERVICE_ACCOUNT_NAMESPACE}:${SERVICE_ACCOUNT_NAME}" \
+  --resource-group $AZURE_RESOURCE_GROUP
 
 ```
 
